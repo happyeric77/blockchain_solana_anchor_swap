@@ -1,220 +1,142 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{Mint, Token, TokenAccount};
-
-use solana_program::program::{invoke, invoke_signed};
+use anchor_lang::solana_program::program_option::COption;
+use anchor_spl::token::{self, Mint, MintTo, TokenAccount};
+// use solana_program::program::{invoke, invoke_signed};
 use solana_program::pubkey::Pubkey;
-use solana_program::system_instruction;
+// use solana_program::system_instruction;
+use std::convert::TryFrom;
 pub mod curve;
 pub mod error;
-use crate::curve::{
-    base::SwapCurve,
-    calculator::{CurveCalculator, RoundDirection, TradeDirection},
-    fees::CurveFees,
-};
-use crate::curve::{
-    constant_price::ConstantPriceCurve, constant_product::ConstantProductCurve,
-    offset::OffsetCurve, stable::StableCurve,
-};
+// use crate::curve::{
+//     base::SwapCurve,
+//     calculator::{CurveCalculator, RoundDirection, TradeDirection},
+//     fees::CurveFees,
+// };
+// use crate::curve::{
+//     constant_price::ConstantPriceCurve, constant_product::ConstantProductCurve,
+//     offset::OffsetCurve, stable::StableCurve,
+// };
 
 declare_id!("BeJhQqHKVRtu72pnMwACnGXfqwUmEqVA777XQkWCtpgn");
 
 #[program]
 pub mod anchor_programs {
     use super::*;
-    pub fn initialize(ctx: Context<Initialize>, price: u64, bump: u8) -> Result<()> {
+    pub fn initialize(
+        ctx: Context<Initialize>,
+        // fees_input: FeesInput,
+        // curve_input: CurveInput,
+    ) -> Result<()> {
+        // TODO:
+        // 1. Replace the initial LP mint amt by curve calc
+
+        // Get swap_authority address (a PDA with seed of amm account's pubkey)
+        let (swap_authority, bump_seed) = Pubkey::find_program_address(
+            &[&ctx.accounts.amm.to_account_info().key.to_bytes()],
+            &ctx.program_id,
+        );
+
+        let _ = &ctx.accounts.validate_input_accounts(swap_authority)?;
+
+        // concatenate swap_authority's seed & bump
+        let seeds = &[
+            &ctx.accounts.amm.to_account_info().key.to_bytes(),
+            &[bump_seed][..],
+        ];
+
+        // calc initial LP mint amt
+        let initial_amount = 1 as u128;
+
+        let mint_initial_amt_cpi_ctx = CpiContext::new(
+            ctx.accounts.token_program.clone(),
+            MintTo {
+                mint: ctx.accounts.pool_mint.to_account_info().clone(),
+                to: ctx.accounts.destination.to_account_info().clone(),
+                authority: ctx.accounts.authority.clone(),
+            },
+        );
+
+        token::mint_to(
+            mint_initial_amt_cpi_ctx.with_signer(&[&seeds[..]]),
+            u64::try_from(initial_amount).unwrap(),
+        )?;
+
         Ok(())
     }
 }
 
 #[derive(Accounts)]
-#[instruction(bump: u8)]
 pub struct Initialize<'info> {
-    /// CHECK: Safe
+    // Swap authority: A PDA (seed: amm account's pubkey) to let program manipulate swap related features for all lp pools
     pub authority: AccountInfo<'info>,
     #[account(signer, zero)]
     pub amm: Account<'info, Amm>,
     #[account(mut)]
     pub pool_mint: Account<'info, Mint>,
+    // amm's token A account
     #[account(mut)]
     pub token_a: Account<'info, TokenAccount>,
+    // amm's token B account
     #[account(mut)]
     pub token_b: Account<'info, TokenAccount>,
     #[account(mut)]
     pub fee_account: Account<'info, TokenAccount>,
+    // The LP token ATA to which the initial LP token is sent (Owner MUST be authority)
     #[account(mut)]
     pub destination: Account<'info, TokenAccount>,
-    /// CHECK: Safe
     pub token_program: AccountInfo<'info>,
 }
 
-impl<'info> Initialize<'info> {}
-
-// #[derive(Accounts)]
-// #[instruction(bump_seed: u8)]
-// pub struct InitAmmPool<'info> {
-//     #[account(mut, signer)]
-//     pub initializer: AccountInfo<'info>,
-//     #[account(init, payer=initializer)]
-//     pub amm_pool: Account<'info, AmmPool>,
-//     #[account(mut)]
-//     pub swap_authority: AccountInfo<'info>,
-//     #[account(mut)]
-//     pub token_a_vault: Account<'info, TokenAccount>,
-//     pub token_b_vault: Account<'info, TokenAccount>,
-//     pub token_program: Program<'info, Token>,
-//     pub rent: Sysvar<'info, Rent>,
-// }
-
-// impl<'info> InitNFT<'info> {
-//     fn create_mint_pda_acc(&self, bump_seed: &u8, mint_seed: &String) -> ProgramResult {
-//         let create_acc_ix = system_instruction::create_account(
-//             // Try create account using system_instruction
-//             &self.minter.key(),
-//             &self.mint_pda_acc.key(),
-//             self.rent.minimum_balance(Mint::LEN),
-//             Mint::LEN as u64,
-//             &spl_token::ID,
-//         );
-//         // @invoke_signed --> SYSTEM PROGRAM (bringing System Program into scope)
-//         // Use invoke_signed rather than invoke -->
-//         //  - THIS PROGRAM calls SYSTEM PROGRAM's create_acount instruction
-//         //  - MINT_PDA_ACCOUNT calls system program to initalized itself
-//         invoke_signed(
-//             &create_acc_ix,
-//             &[self.minter.clone(), self.mint_pda_acc.clone()],
-//             // &[&[ &b"nft_creator"[..], &[bump_seed] ]]
-//             // &[&[ &mint_seed.as_bytes()[..], &[*bump_seed] ]]
-//             &[&[&mint_seed.as_ref(), &[*bump_seed]]],
-//         )?;
-
-//         Ok(())
-//     }
-
-//     fn init_mint_pda_acc(&self) -> ProgramResult {
-//         let init_mint_ix = spl_token::instruction::initialize_mint(
-//             &spl_token::ID,
-//             &self.mint_pda_acc.key,
-//             &self.minter.key,
-//             Some(&self.minter.key),
-//             0,
-//         )?;
-//         // @Invoke --> SPL TOKEN PROGRAM (bringing token_program into scope)
-//         // Use invoke rather than invoke_sign: THIS PROGRAM calls SPL TOKEN PROGRAM's initialize_mint instruction
-//         invoke(
-//             &init_mint_ix,
-//             &[
-//                 self.minter.clone(),
-//                 self.mint_pda_acc.clone(),
-//                 self.rent.to_account_info().clone(),
-//             ],
-//         )?;
-//         Ok(())
-//     }
-
-//     fn update_state(&mut self, mint_seed: &String) {
-//         self.nft_creater.collection.push(mint_seed.clone());
-//         self.nft_creater.total_minted += 1;
-//     }
-// }
-
-// #[derive(Accounts)]
-// #[instruction(seed: String)]
-// pub struct MintNFT<'info> {
-//     #[account(mut, signer)]
-//     pub minter: AccountInfo<'info>,
-//     #[account(mut)]
-//     pub mint_pda_acc: Account<'info, Mint>,
-//     #[account(mut)]
-//     pub minter_ata: Account<'info, TokenAccount>,
-//     pub nft_creator: Account<'info, NftCreator>,
-//     pub nft_creator_program: AccountInfo<'info>,
-//     pub system_program: Program<'info, System>,
-//     pub token_program: Program<'info, Token>,
-//     pub rent: Sysvar<'info, Rent>,
-// }
-
-// impl<'info> MintNFT<'info> {
-//     fn mint_nft(&self) -> ProgramResult {
-//         let ix = spl_token::instruction::mint_to(
-//             &spl_token::ID,
-//             self.mint_pda_acc.to_account_info().key,
-//             self.minter_ata.to_account_info().key,
-//             self.minter.key,
-//             &[self.minter.key],
-//             1,
-//         )?;
-//         invoke(
-//             &ix,
-//             &[
-//                 self.mint_pda_acc.to_account_info().clone(),
-//                 self.minter_ata.to_account_info().clone(),
-//                 self.minter.clone(),
-//             ],
-//         )?;
-//         Ok(())
-//     }
-// }
-
-// #[derive(Accounts)]
-// #[instruction(bump: u8, name: String, symbol: String, uri: String)]
-// pub struct GetMetadata<'info> {
-//     #[account(mut, signer)]
-//     pub minter: AccountInfo<'info>,
-//     #[account(mut)]
-//     pub metadata_account: AccountInfo<'info>,
-//     pub mint_pda_acc: Account<'info, Mint>,
-//     pub nft_manager: AccountInfo<'info>,
-//     pub metaplex_token_program: AccountInfo<'info>,
-//     pub system_program: Program<'info, System>,
-//     pub rent: Sysvar<'info, Rent>,
-// }
-// impl<'info> GetMetadata<'info> {
-//     fn get_metadata(&self, bump: u8, name: String, symbol: String, uri: String) -> ProgramResult {
-//         let seeds = &[
-//             state::PREFIX.as_bytes(),
-//             &metaplex_token_metadata::id().to_bytes(),
-//             &self.mint_pda_acc.key().to_bytes(),
-//         ];
-//         let creator = Creator {
-//             address: self.minter.key(),
-//             verified: true,
-//             share: 100,
-//         };
-//         let (metadata_account, metadata_bump) =
-//             Pubkey::find_program_address(seeds, &metaplex_token_metadata::id());
-//         if bump != metadata_bump {
-//             return Err(NftCreatorError::IncorrectMatadataAccount.into());
-//         }
-//         let metadata_ix = metaplex_token_metadata::instruction::create_metadata_accounts(
-//             metaplex_token_metadata::id(),
-//             metadata_account.key(),
-//             self.mint_pda_acc.key(),
-//             self.minter.key(),
-//             self.minter.key(),
-//             self.minter.key(),
-//             name,
-//             symbol,
-//             uri,
-//             Some(vec![creator]),
-//             0,
-//             true,
-//             false,
-//         );
-//         invoke(
-//             &metadata_ix,
-//             &[
-//                 self.mint_pda_acc.to_account_info().clone(),
-//                 self.minter.clone(),
-//                 self.nft_manager.clone(),
-//                 self.metadata_account.clone(),
-//                 self.system_program.to_account_info().clone(),
-//                 self.rent.to_account_info().clone(),
-//                 self.metaplex_token_program.clone(),
-//             ],
-//         )?;
-//         Ok(())
-//     }
-// }
+impl<'info> Initialize<'info> {
+    fn validate_input_accounts(&self, swap_authority: Pubkey) -> Result<()> {
+        // TODO:
+        // 1. use input curve_input to create curve object
+        // 2. Add Swap constraint
+        if self.amm.is_initialized {
+            return Err(error::SwapError::AlreadyInUse.into());
+        }
+        // Verify if input authority pubkey is valid
+        if *self.authority.key != swap_authority {
+            return Err(error::SwapError::InvalidProgramAddress.into());
+        }
+        if *self.authority.key != self.token_a.owner || *self.authority.key != self.token_b.owner {
+            return Err(error::SwapError::InvalidOwner.into());
+        }
+        // TODO: What is destination??
+        if *self.authority.key == self.fee_account.owner
+            && *self.authority.key == self.destination.owner
+        {
+            return Err(error::SwapError::InvalidOutputOwner.into());
+        }
+        if COption::Some(*self.authority.key) != self.pool_mint.mint_authority {
+            return Err(error::SwapError::InvalidOwner.into());
+        }
+        if self.token_a.mint == self.token_b.mint {
+            return Err(error::SwapError::RepeatedMint.into());
+        }
+        // Amm's A token accounts MUST NOT have any delegation
+        if self.token_a.delegate.is_some() || self.token_b.delegate.is_some() {
+            return Err(error::SwapError::InvalidDelegate.into());
+        }
+        // Amm's B token accounts MUST NOT have Close Authority
+        if self.token_a.close_authority.is_some() || self.token_b.close_authority.is_some() {
+            return Err(error::SwapError::InvalidCloseAuthority.into());
+        }
+        // Amm's LP mint supply MUST be 0
+        if self.pool_mint.supply != 0 {
+            return Err(error::SwapError::InvalidSupply.into());
+        }
+        // Amm's LP mint MUST NOT have Freeze Authority
+        if self.pool_mint.freeze_authority.is_some() {
+            return Err(error::SwapError::InvalidFreezeAuthority.into());
+        }
+        // Amm's LP mint pubkey MUST be == input Fee Account's mint
+        if *self.pool_mint.to_account_info().key != self.fee_account.mint {
+            return Err(error::SwapError::IncorrectPoolMint.into());
+        }
+        Ok(())
+    }
+}
 
 #[account]
 pub struct Amm {
