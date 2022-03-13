@@ -1,0 +1,15 @@
+[programs.localnet]
+anchor_programs = "BeJhQqHKVRtu72pnMwACnGXfqwUmEqVA777XQkWCtpgn"
+
+[registry]
+url = "https://anchor.projectserum.com"
+
+[provider]
+cluster = "https://rpc-mainnet-fork.dappio.xyz"
+# cluster = "localnet"
+# cluster = "https://api.devnet.solana.com"
+
+wallet = "/Users/macbookpro4eric/.config/solana/id.json"
+
+[scripts]
+test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
