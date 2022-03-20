@@ -27,9 +27,6 @@ pub mod anchor_programs {
         fees_input: FeesInput,
         curve_input: CurveInput,
     ) -> Result<()> {
-        // TODO:
-        // 1. Replace the initial LP mint amt by curve calc
-
         // Get swap_authority address (a PDA with seed of amm account's pubkey)
         let (swap_authority, bump_seed) = Pubkey::find_program_address(
             &[&ctx.accounts.amm.to_account_info().key.to_bytes()],
