@@ -1,12 +1,12 @@
 [programs.localnet]
-anchor_programs = "BeJhQqHKVRtu72pnMwACnGXfqwUmEqVA777XQkWCtpgn"
+anchor_programs = "FA1jq7srnPM7GzyXtUhXfxmTsmoaUgccWyVUWhTRH7zn"
 
 [registry]
 url = "https://anchor.projectserum.com"
 
 [provider]
-cluster = "https://rpc-mainnet-fork.dappio.xyz"
-# cluster = "localnet"
+#cluster = "https://rpc-mainnet-fork.dappio.xyz"
+cluster = "localnet"
 # cluster = "https://api.devnet.solana.com"
 
 wallet = "/Users/macbookpro4eric/.config/solana/id.json"
