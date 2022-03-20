@@ -35,14 +35,13 @@ describe("anchor_programs", async () => {
   let mintA = null as Token;
   let mintB = null as Token;
   let mintLP = null as Token;
-  let tokenAata = null;
-  let tokenBata = null;
-  let feeAta = null;
+  let tokenAata = null as PublicKey;
+  let tokenBata = null as PublicKey;
+  let feeAta = null as PublicKey;
   let destinationLPAccount = null;
   let [swap_authority_pda, authority_bump] =
     await anchor.web3.PublicKey.findProgramAddress(
       // Use findProgram Address to generate PDA
-      // [Buffer.from(anchor.utils.bytes.utf8.encode(ammAcc.publicKey.toString()))],
       [ammAcc.publicKey.toBuffer()],
       program.programId
     );
@@ -148,8 +147,8 @@ describe("anchor_programs", async () => {
   });
 
   it("is initialized", async () => {
-    await mintA.mintTo(tokenAata, payer, [payer], 100);
-    await mintB.mintTo(tokenBata, payer, [payer], 100);
+    await mintA.mintTo(tokenAata, payer, [payer], 10000000);
+    await mintB.mintTo(tokenBata, payer, [payer], 10000000);
     const fees_input: TypeDef<
       {
         name: "FeesInput";
@@ -245,144 +244,87 @@ describe("anchor_programs", async () => {
     });
     console.log("Your transaction signature", tx);
     let data = await program.account.amm.fetch(ammAcc.publicKey);
-    console.log("Amm pool is initalized", data.isInitialized);
+    console.log("Amm pool is initialized", data.isInitialized);
   });
 
-  // it("inititialized NFT", async () => {
-  //   let minter_token_acc = new anchor.web3.Keypair();
-  //   let rand_seed = Math.round(Math.random() * 10000);
-  //   let seed = `nft#${rand_seed}`;
-  //   let [mint_pda, bump_seed] = await anchor.web3.PublicKey.findProgramAddress(
-  //     // Use findProgram Address to generate PDA
-  //     [Buffer.from(anchor.utils.bytes.utf8.encode(seed))],
-  //     program.programId
-  //   );
-  //   const tx = await program.rpc.initnft(bump_seed, seed, {
-  //     // Call program mintnft instruction
-  //     accounts: {
-  //       /**@ACCOUNTS */
-  //       minter: initializerMainAccount.publicKey, // 1. minter as the initializer
-  //       nftCreater: nftCreatorAcc.publicKey,
-  //       nftCreaterProgram: program.programId, // 2. this program id
-  //       mintPdaAcc: mint_pda, // 3. The mint_pda just generated
-  //       rent: anchor.web3.SYSVAR_RENT_PUBKEY, // 4. sysVar
-  //       systemProgram: anchor.web3.SystemProgram.programId,
-  //       tokenProgram: TOKEN_PROGRAM_ID,
-  //     },
-  //     signers: [initializerMainAccount],
-  //   });
-
-  //   let pda_bal = await provider.connection.getBalance(mint_pda);
-  //   let updated_state = await program.account.nftCreator.fetch(
-  //     nftCreatorAcc.publicKey
-  //   );
-  //   console.log(
-  //     "\nYour transaction signature: ",
-  //     tx,
-  //     "\nAccounts info:",
-  //     "\nminter: ",
-  //     initializerMainAccount.publicKey.toBase58(),
-  //     "\nmint_pda_acc: ",
-  //     mint_pda.toBase58(),
-  //     "\nmint_pda_lamport: ",
-  //     pda_bal,
-  //     "\nnft_creater_program: ",
-  //     program.programId.toBase58(),
-  //     "\nmint_seed: ",
-  //     seed,
-  //     "\nmint_bump: ",
-  //     bump_seed,
-  //     "\nCreated NFT items",
-  //     updated_state.collection,
-  //     "\nTotal minted: ",
-  //     Number(updated_state.totalMinted)
-  //   );
-  //   token_mint_pubkey = mint_pda;
-  //   minted_seed = seed;
-  // });
-
-  // it("mint NFT", async () => {
-  //   // let minter_token_acc = new anchor.web3.Keypair
-  //   const token_mint = new Token(
-  //     provider.connection,
-  //     token_mint_pubkey,
-  //     TOKEN_PROGRAM_ID,
-  //     initializerMainAccount // the wallet owner will pay to transfer and to create recipients associated token account if it does not yet exist.
-  //   );
-  //   const minter_ata = await token_mint.getOrCreateAssociatedAccountInfo(
-  //     initializerMainAccount.publicKey
-  //   );
-
-  //   const tx = await program.rpc.mintnft(minted_seed, {
-  //     // Call program mintnft instruction
-  //     accounts: {
-  //       /**@ACCOUNTS */
-  //       minter: initializerMainAccount.publicKey, // 2. this program id
-  //       mintPdaAcc: token_mint.publicKey,
-  //       minterAta: minter_ata.address, // 3. The mint_pda just generated
-  //       rent: anchor.web3.SYSVAR_RENT_PUBKEY, // 4. sysVar
-  //       nftCreator: nftCreatorAcc.publicKey,
-  //       nftCreatorProgram: program.programId,
-  //       systemProgram: anchor.web3.SystemProgram.programId,
-  //       tokenProgram: TOKEN_PROGRAM_ID,
-  //     },
-  //     signers: [initializerMainAccount],
-  //   });
-  //   let ata_bal = await provider.connection.getTokenAccountBalance(
-  //     minter_ata.address
-  //   );
-  //   console.log(
-  //     "\nYour transaction signature: ",
-  //     tx,
-  //     "\nAccounts info:",
-  //     "\nMinter's token account: ",
-  //     minter_ata.address.toBase58(),
-  //     "\nMinter's token account balance: ",
-  //     ata_bal.value.amount
-  //   );
-  // });
-  // it("created metadata account", async () => {
-  //   let [metadata_account, metadata_account_bump] =
-  //     await PublicKey.findProgramAddress(
-  //       [
-  //         Buffer.from("metadata", "utf8"),
-  //         // Buffer.from("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s", "utf8"),
-  //         // Buffer.from(token_mint_pubkey.toBase58(), "utf8"),
-  //         new PublicKey(
-  //           "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
-  //         ).toBytes(),
-  //         token_mint_pubkey.toBuffer(),
-  //       ],
-  //       new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
-  //     );
-  //   let name = "Test SOLANA NFT";
-  //   let symbol = "TSN";
-  //   let uri = "tsn.com.test";
-  //   const tx = await program.rpc.getmetadata(
-  //     metadata_account_bump,
-  //     name,
-  //     symbol,
-  //     uri,
-  //     {
-  //       accounts: {
-  //         minter: initializerMainAccount.publicKey,
-  //         metadataAccount: metadata_account,
-  //         mintPdaAcc: token_mint_pubkey,
-  //         nftManager: nft_manager,
-  //         metaplexTokenProgram: new PublicKey(
-  //           "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
-  //         ),
-  //         systemProgram: anchor.web3.SystemProgram.programId,
-  //         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-  //       },
-  //       signers: [initializerMainAccount],
-  //     }
-  //   );
-  //   console.log(
-  //     "\nYour transaction signature: ",
-  //     tx,
-  //     "\nMetadata account: ",
-  //     metadata_account.toBase58()
-  //   );
-  // });
+  it("can swap", async () => {
+    let tokenAamtToSwap = 10000;
+    let minTokenBamtToGet = 1;
+    // Create a new Keypair as an escrow to be delegated to transfer certain amount of source token from initializer's source token ata (in this case tokenA)
+    const userTransferAuthority = anchor.web3.Keypair.generate();
+    // Create an source token (tokenA) ATA for initializer
+    let userAccountA = await mintA.createAccount(
+      initializerMainAccount.publicKey
+    );
+    // Mint some source token (tokenA) ot initalizers's ATA.
+    await mintA.mintTo(userAccountA, payer.publicKey, [], tokenAamtToSwap);
+    // delegate userTransferAuthority to transfer some source token (tokenA) from initializer's ATA
+    await mintA.approve(
+      userAccountA,
+      userTransferAuthority.publicKey,
+      initializerMainAccount,
+      [],
+      tokenAamtToSwap
+    );
+    // Create an destination token (tokenB) ATA for initializer
+    let userAccountB = await mintB.createAccount(
+      initializerMainAccount.publicKey
+    );
+    let poolAccount = await mintLP.createAccount(payer.publicKey);
+    // Trigger swap
+    await program.rpc.swap(
+      new anchor.BN(tokenAamtToSwap),
+      new anchor.BN(minTokenBamtToGet),
+      {
+        accounts: {
+          authority: swap_authority_pda,
+          amm: ammAcc.publicKey,
+          userTransferAuthority: userTransferAuthority.publicKey,
+          sourceInfo: userAccountA,
+          destinationInfo: userAccountB,
+          swapSource: tokenAata,
+          swapDestination: tokenBata,
+          poolMint: mintLP.publicKey,
+          feeAccount: feeAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          hostFeeAccount: poolAccount,
+        },
+        signers: [userTransferAuthority],
+      }
+    );
+    console.log(
+      "transferAuthority acc: ",
+      userTransferAuthority.publicKey.toBase58()
+    );
+    console.log(
+      "swapper's source token - tokenA ATA: ",
+      userAccountA.toBase58()
+    );
+    console.log(
+      "swapper's destination token - tokenB ATA: ",
+      userAccountB.toBase58()
+    );
+    console.log("host Fee Acc: ", poolAccount.toBase58());
+    let userAccountAInfo = await mintA.getAccountInfo(userAccountA);
+    console.log(
+      "swapper's source token - tokenA balance: ",
+      userAccountAInfo.amount.toNumber()
+    );
+    let userAccountBInfo = await mintB.getAccountInfo(userAccountB);
+    console.log(
+      "swapper's destination token - tokenB balance: ",
+      userAccountBInfo.amount.toNumber()
+    );
+    let poolAccountInfo = await mintLP.getAccountInfo(poolAccount);
+    console.log(
+      "host fee account balance: ",
+      poolAccountInfo.amount.toNumber()
+    );
+    let tokenAataInfo = await mintA.getAccountInfo(tokenAata);
+    console.log("pool tokenA: ", tokenAataInfo.amount.toNumber());
+    let tokenBataInfo = await mintB.getAccountInfo(tokenBata);
+    console.log("pool tokenB: ", tokenBataInfo.amount.toNumber());
+    let feeAtaInfo = await mintLP.getAccountInfo(feeAta);
+    console.log("Owner fee balance", feeAtaInfo.amount.toNumber());
+  });
 });

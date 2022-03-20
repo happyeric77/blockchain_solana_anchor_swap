@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::program_option::COption;
-use anchor_spl::token::{self, Mint, MintTo, TokenAccount};
+use anchor_spl::token::{self, Mint, MintTo, TokenAccount, Transfer};
 // use solana_program::program::{invoke, invoke_signed};
 use solana_program::pubkey::Pubkey;
 // use solana_program::system_instruction;
@@ -43,6 +43,11 @@ pub mod anchor_programs {
             &ctx.accounts
                 .mint_create_state_account(bump_seed, curve_input, fees_input, curve)?;
 
+        Ok(())
+    }
+    pub fn swap(ctx: Context<Swap>, amount_in: u64, minimum_amount_out: u64) -> Result<()> {
+        ctx.accounts.validate_accounts(&ctx.program_id)?;
+        ctx.accounts.swap(amount_in, minimum_amount_out)?;
         Ok(())
     }
 }
@@ -183,6 +188,210 @@ impl<'info> Initialize<'info> {
     }
 }
 
+#[derive(Accounts)]
+pub struct Swap<'info> {
+    pub authority: AccountInfo<'info>,
+    pub amm: Box<Account<'info, Amm>>,
+    #[account(signer)]
+    pub user_transfer_authority: AccountInfo<'info>,
+    // Swapper's tokenA(orB) ATA
+    #[account(mut)]
+    pub source_info: AccountInfo<'info>,
+    // Swapper's tokenB(orA) ATA
+    #[account(mut)]
+    pub destination_info: AccountInfo<'info>,
+    // TokenA(orB) ata (owned by swap_authority)
+    #[account(mut)]
+    pub swap_source: Account<'info, TokenAccount>,
+    // TokenB(orA) ata (owned by swap_authority)
+    #[account(mut)]
+    pub swap_destination: Account<'info, TokenAccount>,
+    #[account(mut)]
+    pub pool_mint: Account<'info, Mint>,
+    #[account(mut)]
+    pub fee_account: Account<'info, TokenAccount>,
+    pub token_program: AccountInfo<'info>,
+    #[account(mut)]
+    pub host_fee_account: AccountInfo<'info>,
+}
+
+impl<'info> Swap<'info> {
+    fn validate_accounts(&self, program_id: &Pubkey) -> Result<()> {
+        let amm = &self.amm;
+        if amm.to_account_info().owner != program_id {
+            return Err(ProgramError::IncorrectProgramId.into());
+        }
+        if *self.authority.key
+            != authority_id(program_id, amm.to_account_info().key, amm.bump_seed)?
+        {
+            return Err(error::SwapError::InvalidProgramAddress.into());
+        }
+
+        if !(*self.swap_source.to_account_info().key == amm.token_a_account
+            || *self.swap_source.to_account_info().key == amm.token_b_account)
+        {
+            return Err(error::SwapError::IncorrectSwapAccount.into());
+        }
+        if !(*self.swap_destination.to_account_info().key == amm.token_a_account
+            || *self.swap_destination.to_account_info().key == amm.token_b_account)
+        {
+            return Err(error::SwapError::IncorrectSwapAccount.into());
+        }
+        if *self.swap_source.to_account_info().key == *self.swap_destination.to_account_info().key {
+            return Err(error::SwapError::InvalidInput.into());
+        }
+        if self.swap_source.to_account_info().key == self.source_info.key
+            || self.swap_destination.to_account_info().key == self.destination_info.key
+        {
+            return Err(error::SwapError::InvalidInput.into());
+        }
+        if *self.pool_mint.to_account_info().key != amm.pool_mint {
+            return Err(error::SwapError::IncorrectPoolMint.into());
+        }
+        if *self.fee_account.to_account_info().key != amm.pool_fee_account {
+            return Err(error::SwapError::IncorrectFeeAccount.into());
+        }
+        if *self.token_program.key != amm.token_program_id {
+            return Err(error::SwapError::IncorrectTokenProgramId.into());
+        }
+        Ok(())
+    }
+    fn swap(&self, amount_in: u64, minimum_amount_out: u64) -> Result<()> {
+        let amm = &self.amm;
+        let trade_direction = if *self.swap_source.to_account_info().key == amm.token_a_account {
+            TradeDirection::AtoB
+        } else {
+            TradeDirection::BtoA
+        };
+
+        let curve = build_curve(&amm.curve)?;
+        let fees = build_fees(&amm.fees)?;
+        let result = curve
+            .swap(
+                u128::try_from(amount_in).unwrap(),
+                u128::try_from(self.swap_source.amount).unwrap(),
+                u128::try_from(self.swap_destination.amount).unwrap(),
+                trade_direction,
+                &fees,
+            )
+            .ok_or(error::SwapError::ZeroTradingTokens)?;
+        if result.destination_amount_swapped < u128::try_from(minimum_amount_out).unwrap() {
+            return Err(error::SwapError::ExceededSlippage.into());
+        }
+
+        let (swap_token_a_amount, swap_token_b_amount) = match trade_direction {
+            TradeDirection::AtoB => (
+                result.new_swap_source_amount,
+                result.new_swap_destination_amount,
+            ),
+            TradeDirection::BtoA => (
+                result.new_swap_destination_amount,
+                result.new_swap_source_amount,
+            ),
+        };
+
+        let seeds = &[&amm.to_account_info().key.to_bytes(), &[amm.bump_seed][..]];
+
+        let transfer_cpi = Transfer {
+            from: self.source_info.clone(),
+            to: self.swap_source.to_account_info().clone(),
+            authority: self.user_transfer_authority.clone(),
+        };
+        // Transfer Source token(AorB) amt from swapper's wallet to pool's token(AorB) ATA
+        let transfer_source_amt_cpi_context =
+            CpiContext::new(self.token_program.to_account_info(), transfer_cpi);
+
+        token::transfer(
+            transfer_source_amt_cpi_context.with_signer(&[&seeds[..]]),
+            u64::try_from(result.source_amount_swapped).unwrap(),
+        )?;
+
+        // Handle Fees (Trade fee, Owner fee & Host fee)
+        // As the transferred source amt (result.source_amount_swapped) includes all fees as the followings
+        // 1. Trade fee: as source token(AorB) stright to pools Token(AorB) ATA
+        // 2. Owner fee (Including Host fee): need to be converted to LP tokens and transfer to Owner (including host).
+        //      So, curve.withdraw_single_token_type_exact_out is use to calc the total Owner fee as LP token value
+        let total_lp_owner_fee_amt = curve
+            .withdraw_single_token_type_exact_out(
+                result.owner_fee, // Input the owner fee in source token value
+                swap_token_a_amount,
+                swap_token_b_amount,
+                u128::try_from(self.pool_mint.supply).unwrap(),
+                trade_direction,
+                &fees,
+            )
+            .ok_or(error::SwapError::FeeCalculationFailure)?;
+        let mut lp_owner_fee_amt: u128 = 0;
+        let mut host_fee_amt: u128 = 0;
+
+        if total_lp_owner_fee_amt > 0 {
+            // If the owner fee amt >0, check if host fee lp ata is provided.
+            if *self.host_fee_account.key != Pubkey::new_from_array([0; 32]) {
+                // If host fee lp ata exists and this ata is assicated with lp mint,
+                let host = Account::<TokenAccount>::try_from(&self.host_fee_account)?;
+                if *self.pool_mint.to_account_info().key != host.mint {
+                    return Err(error::SwapError::IncorrectPoolMint.into());
+                }
+                // then extract host fee from total owner fee amount
+                host_fee_amt = fees
+                    .host_fee(total_lp_owner_fee_amt)
+                    .ok_or(error::SwapError::FeeCalculationFailure)?;
+
+                if host_fee_amt > 0 {
+                    // If the extracted host fee > 0, separate total owner fee to two parts
+                    //  1. host_fee_amt
+                    //  2. owner_fee_amt = total_lp_owner_fee_amt - host_fee_amt
+                    lp_owner_fee_amt = total_lp_owner_fee_amt
+                        .checked_sub(host_fee_amt)
+                        .ok_or(error::SwapError::FeeCalculationFailure)?;
+
+                    let mint_host_fee_cpi = MintTo {
+                        mint: self.pool_mint.to_account_info().clone(),
+                        to: self.host_fee_account.to_account_info().clone(),
+                        authority: self.authority.clone(),
+                    };
+                    let mint_host_fee_cpi_context =
+                        CpiContext::new(self.token_program.clone(), mint_host_fee_cpi);
+                    // Mint host lp fee to host ata
+                    token::mint_to(
+                        mint_host_fee_cpi_context.with_signer(&[&seeds[..]]),
+                        u64::try_from(host_fee_amt).unwrap(),
+                    )?;
+                } else {
+                    // If If the extracted host fee = 0,
+                    // owner_fee_amt equal to total_lp_owner_fee_amt
+                    lp_owner_fee_amt = total_lp_owner_fee_amt;
+                }
+            }
+            // Mint owner lp fee to fee account
+            let mint_owner_fee_cpi = MintTo {
+                mint: self.pool_mint.to_account_info().clone(),
+                to: self.fee_account.to_account_info().clone(),
+                authority: self.authority.clone(),
+            };
+            let mint_owner_fee_cpi_context =
+                CpiContext::new(self.token_program.to_account_info(), mint_owner_fee_cpi);
+            token::mint_to(
+                mint_owner_fee_cpi_context.with_signer(&[&seeds[..]]),
+                u64::try_from(lp_owner_fee_amt).unwrap(),
+            )?;
+        }
+        // Transfer destination token from amm pool ata to swapper's token ata
+        let transfer_dest_amt_cpi = Transfer {
+            from: self.swap_destination.to_account_info(),
+            to: self.destination_info.to_account_info(),
+            authority: self.authority.to_account_info(),
+        };
+        let transfer_dest_amt_cpi_context =
+            CpiContext::new(self.token_program.to_account_info(), transfer_dest_amt_cpi);
+        token::transfer(
+            transfer_dest_amt_cpi_context.with_signer(&[&seeds[..]]),
+            u64::try_from(result.destination_amount_swapped).unwrap(),
+        )?;
+        Ok(())
+    }
+}
+
 #[account]
 pub struct Amm {
     // LP creator's address
@@ -265,4 +474,10 @@ pub fn build_fees(fees_input: &FeesInput) -> Result<CurveFees> {
         host_fee_denominator: fees_input.host_fee_denominator,
     };
     Ok(fees)
+}
+
+/// Calculates the authority id by generating a program address.
+pub fn authority_id(program_id: &Pubkey, my_info: &Pubkey, bump_seed: u8) -> Result<Pubkey> {
+    Pubkey::create_program_address(&[&my_info.to_bytes()[..32], &[bump_seed]], program_id)
+        .or(Err(error::SwapError::InvalidProgramAddress.into()))
 }
